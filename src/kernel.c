@@ -28,6 +28,10 @@ void uart_puts(const char* str) {
 extern void init_memory(void);
 extern void test_memory(void);
 
+// External process management functions
+extern void init_process_manager(void);
+extern void test_processes(void);
+
 // Kernel main function
 void kernel_main(void) {
     uart_puts("Hello from your ARM64 OS!\n");
@@ -41,6 +45,14 @@ void kernel_main(void) {
     // Test memory allocation
     uart_puts("\n=== Memory Allocation Test ===\n");
     test_memory();
+    
+    // Initialize process management
+    uart_puts("\n=== Process Management Setup ===\n");
+    init_process_manager();
+    
+    // Test process creation
+    uart_puts("\n=== Process Management Test ===\n");
+    test_processes();
     
     uart_puts("\n=== Kernel Ready ===\n");
     uart_puts("Kernel entering main loop...\n");
