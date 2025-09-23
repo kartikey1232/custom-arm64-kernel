@@ -24,11 +24,26 @@ void uart_puts(const char* str) {
     }
 }
 
+// External memory management functions
+extern void init_memory(void);
+extern void test_memory(void);
+
 // Kernel main function
 void kernel_main(void) {
     uart_puts("Hello from your ARM64 OS!\n");
     uart_puts("Kernel successfully booted.\n");
     uart_puts("System ready for development.\n");
+    
+    // Initialize memory management
+    uart_puts("\n=== Memory Management Setup ===\n");
+    init_memory();
+    
+    // Test memory allocation
+    uart_puts("\n=== Memory Allocation Test ===\n");
+    test_memory();
+    
+    uart_puts("\n=== Kernel Ready ===\n");
+    uart_puts("Kernel entering main loop...\n");
     
     // Simple loop to keep kernel running
     while (1) {

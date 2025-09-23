@@ -19,8 +19,9 @@ core_hang:
 
 core0:
     // Set up stack pointer
-    // Place stack at 0x80000 (before our kernel load address)
-    mov sp, #0x80000
+    // Place stack at 0x40070000 (just before our kernel load address)
+    mov x1, #0x40070000
+    mov sp, x1
     
     // Clear BSS section
     ldr x1, =__bss_start
@@ -33,6 +34,9 @@ clear_bss:
     cbnz w2, clear_bss
 
 clear_done:
+    // Skip exception table installation for now
+    // bl install_exception_table
+    
     // Jump to C kernel
     bl kernel_main
     
