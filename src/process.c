@@ -10,6 +10,7 @@ extern void uart_putc(char c);
 extern void* kmalloc(size_t size);
 extern void kfree(void* ptr);
 
+
 // Process states
 typedef enum {
     PROCESS_READY = 0,
@@ -28,9 +29,9 @@ typedef struct {
     uint64_t pc;        // Program counter
     uint64_t pstate;    // Processor state
 } cpu_context_t;
-
 extern void switch_context(cpu_context_t* old_ctx, cpu_context_t* new_ctx);
 extern void start_first_process(cpu_context_t* ctx);
+void schedule(void);
 
 // Process Control Block
 typedef struct process {
@@ -113,6 +114,28 @@ void init_process_manager(void) {
     uart_puts("Process manager initialized.\n");
 }
 
+// Process wrapper function to handle process termination
+static void process_wrapper(void (*entry_point)(void)) {
+    // Call the actual process function
+    entry_point();
+    
+    // If process returns, mark it as terminated
+    if (current_process) {
+        current_process->state = PROCESS_TERMINATED;
+        uart_puts("Process ");
+        print_decimal(current_process->pid);
+        uart_puts(" terminated.\n");
+    }
+    
+    // Yield to scheduler
+    schedule();
+    
+    // Should never reach here
+    while(1) {
+        asm volatile("wfi");
+    }
+}
+
 // Create a new process
 process_t* create_process(const char* name, void (*entry_point)(void)) {
     uart_puts("Creating process: ");
@@ -142,25 +165,20 @@ process_t* create_process(const char* name, void (*entry_point)(void)) {
     proc->time_slice = TIME_SLICE_TICKS;
     proc->next = NULL;
     
-    // Initialize context
-    // Clear all registers
-    proc->context.x0 = proc->context.x1 = proc->context.x2 = proc->context.x3 = 0;
-    proc->context.x4 = proc->context.x5 = proc->context.x6 = proc->context.x7 = 0;
-    proc->context.x8 = proc->context.x9 = proc->context.x10 = proc->context.x11 = 0;
-    proc->context.x12 = proc->context.x13 = proc->context.x14 = proc->context.x15 = 0;
-    proc->context.x16 = proc->context.x17 = proc->context.x18 = proc->context.x19 = 0;
-    proc->context.x20 = proc->context.x21 = proc->context.x22 = proc->context.x23 = 0;
-    proc->context.x24 = proc->context.x25 = proc->context.x26 = proc->context.x27 = 0;
-    proc->context.x28 = proc->context.x29 = proc->context.x30 = 0;
+    // Initialize context - simpler approach
+    // Clear all registers  
+    for (int i = 0; i < 31; i++) {
+        *((uint64_t*)&proc->context + i) = 0;
+    }
     
     // Set stack pointer to top of stack (stacks grow downward)
     proc->context.sp = (uint64_t)(proc->stack_base + PROCESS_STACK_SIZE - 16);
     
-    // Set program counter to entry point
+    // Set program counter to entry point directly
     proc->context.pc = (uint64_t)entry_point;
     
-    // Set processor state (EL1, interrupts enabled)
-    proc->context.pstate = 0x3C4; // EL1h, DAIF clear
+    // Set processor state (simple)
+    proc->context.pstate = 0;
     
     // Add to process list
     proc->next = process_list;
@@ -208,58 +226,67 @@ process_t* get_next_process(void) {
     return next;
 }
 
-// Perform actual context switch
-void do_context_switch(void) {
-    static process_t* previous_process = NULL;
+// Start first process (simplified version)
+// Start first process (simplified version) 
+void start_multitasking(void) {
+    if (!current_process) {
+        uart_puts("No process to start!\n");
+        return;
+    }
     
+    uart_puts("Starting first process: ");
+    print_decimal(current_process->pid);
+    uart_puts("\n");
+    
+    current_process->state = PROCESS_RUNNING;
+    
+    // Jump directly to the first process
+    start_first_process(&current_process->context);
+}
+void process_yield(void) {
     if (!current_process) {
         return;
     }
     
-    if (previous_process != current_process) {
+    uart_puts("Process ");
+    print_decimal(current_process->pid);
+    uart_puts(" yielding CPU\n");
+    
+    // Mark current process as ready and reschedule
+    current_process->state = PROCESS_READY;
+    schedule_process(current_process);
+    
+    // Get next process
+    process_t* old_process = current_process;
+    current_process = get_next_process();
+    
+    if (current_process && current_process != old_process) {
+        current_process->state = PROCESS_RUNNING;
+        current_process->time_slice = TIME_SLICE_TICKS;
+        
         uart_puts("Switching to process ");
         print_decimal(current_process->pid);
-        uart_puts(" (");
-        uart_puts(current_process->name);
-        uart_puts(")\n");
+        uart_puts("\n");
         
-        if (previous_process) {
-            switch_context(&previous_process->context, &current_process->context);
-        } else {
-            // First process start
-            start_first_process(&current_process->context);
-        }
-        
-        previous_process = current_process;
+        // Perform context switch
+        switch_context(&old_process->context, &current_process->context);
+    } else {
+        // No other process available, continue with current
+        current_process = old_process;
+        current_process->state = PROCESS_RUNNING;
     }
 }
 
-// Simple scheduler (called from timer interrupt)
-// Simple scheduler (called from timer interrupt or manually)  
-// Simple scheduler (called from timer interrupt or manually)  
+// Simple scheduler (called from timer interrupt or manually)
 void schedule(void) {
     scheduler_ticks++;
-    
-    uart_puts("Schedule called, current_process: ");
-    if (current_process) {
-        print_decimal(current_process->pid);
-    } else {
-        uart_puts("NULL");
-    }
-    uart_puts("\n");
     
     // If no current process, try to get one from ready queue
     if (!current_process) {
         current_process = get_next_process();
-        uart_puts("Got next process: ");
         if (current_process) {
-            print_decimal(current_process->pid);
             current_process->state = PROCESS_RUNNING;
             current_process->time_slice = TIME_SLICE_TICKS;
-            uart_puts(" - calling do_context_switch\n");
-            do_context_switch();
-        } else {
-            uart_puts("NULL\n");
         }
         return;
     }
@@ -286,9 +313,9 @@ void schedule(void) {
         }
         
         // Perform context switch if we have a new process
-        if (current_process && current_process != old_process) {
-            do_context_switch();
-        }
+        // if (current_process && current_process != old_process) {
+        //     do_context_switch();
+        // }
     }
 }
 
@@ -334,7 +361,10 @@ void print_processes(void) {
     uart_puts("\n==================\n\n");
 }
 
-// Test process functions
+// Forward declaration for cooperative yielding
+void process_yield(void);
+
+// Test process functions with cooperative yielding
 void test_process_1(void) {
     static int counter = 0;
     while (1) {
@@ -342,8 +372,14 @@ void test_process_1(void) {
         print_decimal(counter++);
         uart_puts("\n");
         
-        // Simple busy wait
-        for (volatile int i = 0; i < 1000000; i++);
+        // Shorter busy wait for better responsiveness
+        for (volatile int i = 0; i < 50000; i++);
+        
+        // Yield every few iterations to allow process switching
+        if (counter % 3 == 0) {
+            uart_puts("Process 1 yielding...\n");
+            process_yield();
+        }
     }
 }
 
@@ -354,13 +390,19 @@ void test_process_2(void) {
         print_decimal(counter++);
         uart_puts("\n");
         
-        // Simple busy wait
-        for (volatile int i = 0; i < 2000000; i++);
+        // Different busy wait timing
+        for (volatile int i = 0; i < 75000; i++);
+        
+        // Yield every few iterations
+        if (counter % 4 == 0) {
+            uart_puts("Process 2 yielding...\n");
+            process_yield();
+        }
     }
 }
 
-// Test process management
-// Test process management with context switching
+// Test process management with cooperative multitasking
+// Test process management with cooperative multitasking
 void test_processes(void) {
     uart_puts("Testing process creation...\n");
     
@@ -378,10 +420,13 @@ void test_processes(void) {
     
     print_processes();
     
-    uart_puts("Starting first process...\n");
+    uart_puts("Starting cooperative multitasking...\n");
     
-    // Start the scheduler - this will begin multitasking!
-    schedule();
-    
-    uart_puts("Process management test completed.\n");
+    // Get the first process and start it
+    current_process = get_next_process();
+    if (current_process) {
+        start_multitasking();  // Changed from start_first_process()
+    } else {
+        uart_puts("No processes to run!\n");
+    }
 }

@@ -82,14 +82,9 @@ context_switch_done:
 // x0 = pointer to first process context
 .global start_first_process
 start_first_process:
-    // Load the context and start the first process
-    mov x1, x0          // Move context pointer to x1
-    mov x0, xzr         // No old context to save
-    b restore_new_context
-
-// Simple yield function for cooperative multitasking
-.global process_yield
-process_yield:
-    // This will be called by processes to voluntarily give up CPU
-    // For now, just return - we'll implement this later
-    ret
+    // Simple approach - just jump to PC with correct stack
+    ldr x1, [x0, #248]    // Load SP
+    mov sp, x1            // Set stack pointer
+    
+    ldr x1, [x0, #256]    // Load PC  
+    br x1                 // Jump to process entry point
